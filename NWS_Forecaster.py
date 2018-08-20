@@ -63,7 +63,10 @@ def main():
                       'KPHX': {'latlng': (33.45, -112.07)}
                       }}
 
-    # yesterday = historical('KSAC')
+    historical_date = (datetime.now(pytz.timezone('US/Pacific'))) + timedelta(days=-1)
+    historical_date = historical_date.replace(hour=0, minute=0, second=0, microsecond=0)
+    df_historical = historical(list(locations['city_code']), historical_date)
+    sql_inject(df_historical, location='historical_data', actuals=True)
     # df_hourly = hourly(n, convert_to_daily=True)
     df_models = stormVista(list(locations['city_code']))
 
@@ -75,24 +78,52 @@ def main():
 
         # Must return a dataframe since we're manipulating df_final in this def
         df_maxt = plot(df_final, location)
-        sql_inject(df_maxt, location)
+        sql_inject(df_maxt, location, actuals=False)
     # df_final.to_csv(os.path.join(os.path.dirname(os.path.abspath(__file__)),'output.csv'), index=True,
     # columns=['KSAC_max_gfs', 'KSAC_max_gfs-ens-bc','KSAC_max_ecmwf','KSAC_max_ecmwf-eps','high.nws','high.wu'])
 
+def historical(cities,date):
+    hist = n.historical_data(date)
+    df_hist = pd.concat([pd.DataFrame(json_normalize(x['properties'])) for x in hist['features']], ignore_index=True)
+    df_hist = df_hist[df_hist['station'].isin(cities)]
+    # Need to convert list objects to strings since SQL can not take a list
+    df_hist["high_record_years"] = df_hist["high_record_years"].apply(lambda x: list(map(str, x)), 1).str.join(',')
+    df_hist["low_record_years"] = df_hist["low_record_years"].apply(lambda x: list(map(str, x)), 1).str.join(',')
+    df_hist["date"] = date
+    df_hist.set_index("date", inplace= True)
+    return df_hist
 
-def sql_inject(df, location):
-    db_path = os.path.curdir + '/database.sqlite3'
+def sql_inject(df, location, actuals):
+    pd.options.mode.chained_assignment = None  # Turns off a warning that we are copying a dataframe
+    print("ATTEMPTING TO INJECT "  + location + " INTO SQL DATABASE...\n")
+    db_path = os.path.curdir + '/forecast_data.sqlite3'
     # db_path = os.path.join(os.path.dirname(__file__), 'database.sqlite3')
     conn = sqlite3.connect(db_path)
     c = conn.cursor()
 
     df.index = df.index.tz_convert(None)
-    print(location)
     # df.columns = [str(col) + '_Tmax' for col in df.columns]
     df['city_code'] = location
     df['date_created'] = df.index[0]
     df['date_valid'] = df.index
-    df.to_sql('d2', conn, if_exists='append', index=False)
+    df['forecast_day'] = (df['date_valid'] - df['date_created'])/np.timedelta64(1, 'D')
+    if actuals:
+        #df.drop(['city_code', 'forecast_day'], axis=1, inplace=True)
+        c.execute("SELECT date_created FROM actuals WHERE date_created = ? AND city_code = ?",
+                  (df.index[0].strftime('%Y-%m-%dT%H:%M:%S.%f'), location,))
+        data = c.fetchall()
+        if len(data) == 0:
+            df.to_sql('actuals', conn, if_exists='append', index=False)
+        return
+    c.execute("SELECT date_created FROM forecasts WHERE date_created = ? AND city_code = ?",
+              (df.index[0].strftime('%Y-%m-%d %H:%M:%S'), location,))
+    data=c.fetchall()
+    if len(data)==0:
+        print("Appending Data To Forecast Table of Database")
+        df.to_sql('forecasts', conn, if_exists='append', index=False)
+    else:
+        print("Data already exists for " + location + " on " + (df.index[0]).strftime("%Y-%m-%d"))
+    pd.options.mode.chained_assignment = 'warn'  # Turn warning back on
     return
 
 
@@ -175,10 +206,10 @@ def daily(n, latlng):
 
     # Provide timezone information to our dataframe by first setting the time information to UTC,
     # then converting to the actual timezone
-    df_wu['day']=df_wu['day'].dt.tz_localize(pytz.utc)
+    df_wu['day'] = df_wu['day'].dt.tz_localize(pytz.utc)
     df_wu['day'] = df_wu['day'].dt.tz_convert(wu_timezone)
     df_wu.rename(columns={'high.fahrenheit': 'high_wu', 'low.fahrenheit': 'low_wu'}, inplace=True)
-    df_wu[['high_wu', 'low_wu']]=df_wu[['high_wu','low_wu']].apply(pd.to_numeric)
+    df_wu[['high_wu', 'low_wu']]=df_wu[['high_wu', 'low_wu']].apply(pd.to_numeric)
 
     # Make sure the time columns are a datetime object for Pandas to read
     df_nws['startTime'] = pd.to_datetime(df_nws['startTime'], utc=True)
@@ -190,7 +221,7 @@ def daily(n, latlng):
     # Instead of combining the data by a single day, the NWS provides a start and end
     # time for each period with an "isDaytime" flag. We will use the isDaytime flag to get
     # the daytime and nighttime temperaures.
-    df_nws['high_nws']= df_nws[df_nws.isDaytime.isin([True])]['temperature']
+    df_nws['high_nws'] = df_nws[df_nws.isDaytime.isin([True])]['temperature']
     df_nws['low_nws'] = df_nws[df_nws.isDaytime.isin([False])]['temperature']
 
     # We want to merge the dataframes off of a unique date, but the NWS data has the same date
@@ -219,13 +250,6 @@ def daily(n, latlng):
     # print(df_wu.index[0].day)
     return df_wu
 
-
-def historical(cities):
-    hist = n.historical_data((datetime.now(pytz.timezone('US/Pacific'))) + timedelta(days=-1))
-    station = list(filter(lambda s: s['properties']['station'] == cities, hist['features']))[0]
-    return station
-
-
 def stormVista(cities):
 
     base_url = "https://www.stormvistawxmodels.com/"
@@ -236,7 +260,8 @@ def stormVista(cities):
     tomorrow = (datetime.utcnow() + timedelta(days=1)).strftime("%Y%m%d")
 
     modelCycle = '12z'
-    # General rule that the 12Z model is not out until roughly 1:00 pm PDT (20z) and the 00Z isn't avail until 1:00 am (0800Z)
+    # General rule that the 12Z model is not out until roughly 1:00 pm PDT (20z)
+    # and the 00Z isn't avail until 1:00 am (0800Z)
     if today.hour >= 8 and today.hour <= 20:
         modelCycle = '00z'
 
@@ -244,12 +269,12 @@ def stormVista(cities):
     df_models = pd.DataFrame(data=pd.date_range(start=today.strftime("%Y%m%d"), periods=16, freq='D'), columns=['date'])
 
     for model in models:
-        # raw = "client-files/" + clientKey + "/model-data/" + model + "/" + today + "/" + modelCycle + "/city-extraction/individual/" + regions + "_raw.csv"
+        # raw = "client-files/" + clientKey + "/model-data/" + model + "/" + today + "/" +
+        # modelCycle + "/city-extraction/individual/" + regions + "_raw.csv"
         sv_min_max_all = "client-files/" + clientKey + "/model-data/" + model + "/" + today.strftime("%Y%m%d") + "/" + modelCycle + "/city-extraction/corrected-max-min_northamerica.csv"
         fileName = today.strftime("%Y%m%d") + "_" + modelCycle + "_" + model + ".csv"
-        curDir = os.path.curdir
-        print(curDir)
-        # curDir = os.path.dirname(os.path.abspath(__file__))
+
+        curDir = os.path.dirname(os.path.abspath(__file__))
         # Download file if it hasn't been downloaded yet.
         if not os.path.isfile(os.path.join(curDir,fileName)):
             try:
@@ -261,7 +286,7 @@ def stormVista(cities):
                                              end=(datetime.utcnow() + timedelta(days=15)).strftime("%Y%m%d"),
                                                        freq='D'), columns=['date'])
         else:
-            df_corrected = pd.read_csv(os.path.join(curDir,fileName), header=[0, 1])
+            df_corrected = pd.read_csv(os.path.join(curDir, fileName), header=[0, 1])
 
         df_corrected.columns = df_corrected.columns.map('/'.join)
         df_corrected.set_index(['station/station'], inplace=True)
@@ -332,19 +357,19 @@ def stormVista(cities):
 
 
 def plot(df, city_code):
-    pd.options.mode.chained_assignment = None # Turns off a warning that we are copying a dataframe
+    pd.options.mode.chained_assignment = None  # Turns off a warning that we are copying a dataframe
     # just plot the max temperatures for a given city
-    keep_cols = [ col for col in df.columns if city_code+'_max' in col or 'high_wu' in col or 'high_nws' in col]
+    keep_cols = [col for col in df.columns if city_code+'_max' in col or 'high_wu' in col or 'high_nws' in col]
     df = df[keep_cols]
 
     # df is a COPY of the df. Any changes we do in here MUST be returned to __main__ if we want to use it again.
     df.rename(columns={city_code+'_max_gfs': 'GFS', city_code+'_max_ecmwf': 'EURO',
-                       city_code + '_max_gfs-ens-bc': 'GFS-bc',
-                       city_code + '_max_ecmwf-eps': 'EPS',
+                       city_code + '_max_gfs-ens-bc': 'GFS_bc',
+                       city_code + '_max_ecmwf-eps': 'EURO_EPS',
                        'high_nws': 'NWS', 'high_wu': 'PCWA'}, inplace=True)
 
     # df is a COPY of the df. Any changes we do in here MUST be returned to __main__ if we want to use it again.
-    df['PCWA'].fillna(df[['EPS', 'EPS', 'EPS', 'GFS-bc', 'GFS']].mean(axis=1), inplace = True)
+    df['PCWA'].fillna(df[['EURO_EPS', 'EURO_EPS', 'EURO_EPS', 'GFS_bc', 'GFS']].mean(axis=1), inplace=True)
 
     for model in df.columns:
         plt.style.use('seaborn-darkgrid')
@@ -354,11 +379,11 @@ def plot(df, city_code):
         COL = MplColorHelper('jet', 60, 110)
 
         xfmt = mdates.DateFormatter('%a\n%#m/%#d')
-        line_color = {'GFS':'darkgreen', 'GFS-bc':'limegreen','EURO':'darkviolet',
-                      'EPS':'violet','NWS':'firebrick', 'PCWA' : 'orange'}
+        line_color = {'GFS':'darkgreen', 'GFS_bc': 'limegreen', 'EURO': 'darkviolet',
+                      'EURO_EPS': 'violet', 'NWS': 'firebrick', 'PCWA': 'orange'}
 
-        line_style = {'GFS': '-', 'GFS-bc': '--', 'EURO': '-',
-                      'EPS': '--', 'NWS': ':', 'PCWA': '-'}
+        line_style = {'GFS': '-', 'GFS_bc': '--', 'EURO': '-',
+                      'EURO_EPS': '--', 'NWS': ':', 'PCWA': '-'}
 
         # multiple line plot
         column_num = 0
@@ -385,8 +410,8 @@ def plot(df, city_code):
         plt.plot(df.index, df[model], markerfacecolor = 'black', color=line_color[model], linestyle = line_style[model], linewidth=4, alpha=0.7, zorder=2)
         plt.scatter(df.index, df[model], color=COL.get_rgb(df[model]), edgecolors='black', zorder=3)
         x_min, x_max, y_min, y_max = plt.axis()
-        plt.axis((x_min,x_max, int(math.floor(y_min / 5.0)) * 5, int(math.floor((y_max + 10)/ 10.0)) * 10))
-        plt.xticks(df.index, rotation=0, fontsize = 8)
+        plt.axis((x_min,x_max, int(math.floor(y_min / 5.0)) * 5, int(math.floor((y_max + 10) / 10.0)) * 10))
+        plt.xticks(df.index, rotation=0, fontsize=8)
         plt.gcf().subplots_adjust(bottom=0.15)
         # plt.gcf().subplots_adjust(top=0)
         plt.gcf().subplots_adjust(left=0.1)
@@ -405,11 +430,11 @@ def plot(df, city_code):
         # And add a special annotation for the group we are interested in
         # plt.text(100.2, df.KSAC_max_gfs.tail(1), 'Mr Orange', horizontalalignment='left', size='small', color='orange')
         if model == 'PCWA':
-            plt.savefig(city_code + '_'+ model +'.png')
+            plt.savefig(city_code + '_' + model +'.png')
             plt.show()
         plt.clf()
         plt.close()
-    pd.options.mode.chained_assignment = 'warn' # Turn warning back on
+    pd.options.mode.chained_assignment = 'warn'  # Turn warning back on
     return df
 
 
