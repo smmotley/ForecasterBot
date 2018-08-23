@@ -25,22 +25,6 @@ plt.interactive(False)
 KEYS = pd.read_csv(os.path.join(Path(__file__).parents[2], 'userkeys.config'))
 n = noaa.NOAA()
 
-
-class FORECASTDAY(object):
-    def __init__(self, outlet):
-        self.day0 = {}
-        self.day1 = {}
-        self.day2 = {}
-        self.day3 = {}
-        self.day4 = {}
-        self.day5 = {}
-        self.day6 = {}
-        self.day7 = {}
-        self.day8 = {}
-        self.day9 = {}
-        self.day10 = {}
-
-
 class MplColorHelper:
 
     def __init__(self, cmap_name, start_val, stop_val):
@@ -62,9 +46,8 @@ def main():
                       'KLAS': {'latlng': (36.17, -115.18)},
                       'KPHX': {'latlng': (33.45, -112.07)}
                       }}
-
     historical_date = (datetime.now(pytz.timezone('US/Pacific'))) + timedelta(days=-1)
-    historical_date = historical_date.replace(hour=0, minute=0, second=0, microsecond=0)
+    historical_date = historical_date.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
     df_historical = historical(list(locations['city_code']), historical_date)
     sql_inject(df_historical, location='historical_data', actuals=True)
     # df_hourly = hourly(n, convert_to_daily=True)
@@ -95,13 +78,14 @@ def historical(cities,date):
 
 def sql_inject(df, location, actuals):
     pd.options.mode.chained_assignment = None  # Turns off a warning that we are copying a dataframe
-    print("ATTEMPTING TO INJECT "  + location + " INTO SQL DATABASE...\n")
-    db_path = os.path.curdir + '/forecast_data.sqlite3'
-    # db_path = os.path.join(os.path.dirname(__file__), 'database.sqlite3')
+    #db_path = os.path.curdir + '/forecast_data.sqlite3'
+    db_path = os.path.join(os.path.dirname(__file__), 'forecast_data.sqlite3')
     conn = sqlite3.connect(db_path)
     c = conn.cursor()
 
-    df.index = df.index.tz_convert(None)
+    # Need to convert to tz-naive if injecting into sqlite (actuals have already been converted).
+    if not actuals:
+        df.index = df.index.tz_convert(None)
     # df.columns = [str(col) + '_Tmax' for col in df.columns]
     df['city_code'] = location
     df['date_created'] = df.index[0]
@@ -110,10 +94,13 @@ def sql_inject(df, location, actuals):
     if actuals:
         #df.drop(['city_code', 'forecast_day'], axis=1, inplace=True)
         c.execute("SELECT date_created FROM actuals WHERE date_created = ? AND city_code = ?",
-                  (df.index[0].strftime('%Y-%m-%dT%H:%M:%S.%f'), location,))
+                  (df.index[0].strftime('%Y-%m-%d %H:%M:%S'), location,))
         data = c.fetchall()
         if len(data) == 0:
+            print("INJECTING HISTORICAL DATA INTO SQL DATABASE...\n")
             df.to_sql('actuals', conn, if_exists='append', index=False)
+        else:
+            print("HISTORICAL DATA ALREADY EXISTS IN DATABASE")
         return
     c.execute("SELECT date_created FROM forecasts WHERE date_created = ? AND city_code = ?",
               (df.index[0].strftime('%Y-%m-%d %H:%M:%S'), location,))
@@ -172,7 +159,7 @@ def hourly(n, latlng, convert_to_daily):
 
     df_fcst_hourly.plot(y=['wu_temp', 'nws_temp'], use_index= True, kind='line')
 
-    plt.show()
+    #plt.show()
 
     # 7) Resample hourly data into daily data based off of local timezone information
     df_fcst_daily = df_fcst_hourly.resample('D')['wu_temp','nws_temp'].agg({'min','max'})
@@ -192,8 +179,11 @@ def daily(n, latlng):
     # 2) Make dataframe object from the json response
     # Make a dataframe object of the WU forecast by flattening out the json file.
     df_wu = pd.concat([pd.DataFrame(json_normalize(x)) for x in res_wu['forecast']['simpleforecast']['forecastday']], ignore_index=True)
-    df_nws = pd.DataFrame(res_nws['properties']['periods'])
-
+    try:
+        df_nws = pd.DataFrame(res_nws['properties']['periods'])
+    except KeyError:
+        print("!!!!FATAL ERROR!!!! NWS Data Unavailable: " + res_nws['detail'])
+        exit()
     # 3) Take the string object and convert to a datetime object.
     #   Set the column 'day' to the 'epoch' object in the json file.
     #   Since the NWS must match these dates, we just use WU dates.
@@ -399,12 +389,7 @@ def plot(df, city_code):
                                     ha='center', color='red', textcoords='offset points')
 
         # Now re do the interesting curve, but biger with distinct color
-        # points = np.array([mdates.date2num(df.index.to_pydatetime()), df['gfs']]).T.reshape(-1, 1, 2)
-        # norm = plt.Normalize(60, 110)
-        # lc = LineCollection(np.concatenate([points[:-1], points[1:]], axis=1), cmap=('jet'), norm=norm)
-        # lc.set_array(df['gfs'])
-        # lc.set_linewidth(2)
-        # plt.gca().add_collection(lc)
+
         plt.legend(loc='upper center', ncol=6, prop={'size': 6})
 
         plt.plot(df.index, df[model], markerfacecolor = 'black', color=line_color[model], linestyle = line_style[model], linewidth=4, alpha=0.7, zorder=2)
@@ -431,7 +416,7 @@ def plot(df, city_code):
         # plt.text(100.2, df.KSAC_max_gfs.tail(1), 'Mr Orange', horizontalalignment='left', size='small', color='orange')
         if model == 'PCWA':
             plt.savefig(city_code + '_' + model +'.png')
-            plt.show()
+            #plt.show()
         plt.clf()
         plt.close()
     pd.options.mode.chained_assignment = 'warn'  # Turn warning back on
