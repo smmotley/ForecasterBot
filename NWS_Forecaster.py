@@ -62,7 +62,15 @@ def main():
 
     for location in locations['city_code']:
         df_daily = daily(n, locations['city_code'][location]['latlng'])
+
+        # An empty dataframe will occur if the Aries Weather data pull failed. If the NWS data fails, the
+        # df will still have Aries weather info. In this case, the 'nws_high' column will be nan, but
+        # the df index will still contain datetimes from Aries, so a merge CAN take place with df_models.
         if df_daily.empty:
+            # At this point df_daily is completely empty (no index, no nan's, nothing), so the following line
+            # of code simply adds nan values in each row of the dataframe for the nws and aries weather columns.
+            # Note: In the final plotting function, the code says: if the nws / aries values are nan, then use a
+            #       formula consisting of only model data.
             df_final = df_models.reindex_axis(df_models.columns.union(df_daily.columns), axis=1)
         else:
             df_final = pd.merge(df_models.filter(like=location + '_max', axis='columns'), df_daily,
@@ -126,7 +134,10 @@ def sql_inject(df, location, actuals):
                  'low_time',
                  'precip_normal',
                  'precip_record_years',
-                 'snow_record_years',
+                 'snow_record_years', 'average_wind_speed',
+                 'highest_gust_direction', 'highest_gust_speed',
+                 'highest_wind_direction', 'highest_wind_speed',
+                 'resultant_wind_direction', 'resultant_wind_speed',
                  'valid', 'average_sky_cover'],
                 inplace=True, axis=1)
         c.execute("SELECT date_created FROM actuals WHERE date_created = ? AND city_code = ?",
@@ -210,7 +221,11 @@ def hourly(n, latlng, convert_to_daily):
 
 def daily(n, latlng):
     # 1) Get json data from NWS and WU response. We are getting daily data here, so set hourly flag to FALSE
-    res_nws = n.points_forecast(latlng[0], latlng[1], hourly=False)  # NWS POINT FORECAST
+    res_nws = []
+    try:
+        res_nws = n.points_forecast(latlng[0], latlng[1], hourly=False)  # NWS POINT FORECAST
+    except:
+        print("Did Not Grab NWS Forecast...Continuing")
     # Turning off weather underground due to end of service on 12/31/18
     #res_wu = n.wu_forecast(latlng[0], latlng[1], hourly=False)  # Wunderground POINT FORECAST
     res_aw = n.aw_forecast(latlng[0], latlng[1], hourly=False)  # AerisWeather POINT FORECAST
@@ -238,6 +253,8 @@ def daily(n, latlng):
         df_aw[['high_aw', 'low_aw']] = df_aw[['high_aw', 'low_aw']].apply(pd.to_numeric)
 
     except IndexError:
+        # If the Aw data doesn't exist, we won't even try to get the NWS data, just return an empty dataframe
+        # which will lead to the forecast coming entirely from the model.
         print("PLEASE RESET YOUR AERISWEATHER KEY, RETURNING EMPTY DATAFRAME FOR AW AND NWS")
         df_empty = pd.DataFrame(columns=["high_aw", "high_nws"])
         return df_empty
@@ -290,17 +307,19 @@ def daily(n, latlng):
     except KeyError:
         print("!!!!FATAL ERROR!!!! NWS Data Unavailable: " + res_nws['detail'])
         df_nws = pd.DataFrame(columns=["endTime", "startTime", "high_nws", "low_nws"])
-        df_aw = df_aw.reindex_axis(df_aw.columns.union(df_nws.columns), axis=1)
 
+        # IF you get an exception, at this point the df_aw index will not be set. So set index as date.
+        df_aw.set_index('day', inplace=True)
+        df_aw = df_aw.reindex_axis(df_aw.columns.union(df_nws.columns), axis=1)
     return df_aw
 
 def nwsAlerts(warning_types):
     # Link to CA zone map: https://www.weather.gov/media/pimar/PubZone/ca_n_zone.pdf
-    alerts = n.alerts(active="1", zone="CAZ067,CAZ017,CAZ069")
     counter = 0
     msg = ""
     id_list = []
     try:
+        alerts = n.alerts(active="1", zone="CAZ067,CAZ017,CAZ069")
         for alert in alerts["features"]:
             # Since we are getting alerts from multiple Zones, it's possible to have the exact same alert for different
             # zones. Therefore, we need to make sure we're not sending multiple alerts for the same alert in the email.
@@ -553,6 +572,9 @@ def plot(df, city_code, df_historical_city, long_name):
     # df is a COPY of the df. Any changes we do in here MUST be returned to __main__ if we want to use it again.
     df['PCWA'].fillna(df[['EURO_EPS', 'EURO_EPS', 'EURO_EPS', 'GFS_bc', 'GFS']].mean(axis=1), inplace=True)
 
+    # for some reason, the NWS data was being stored as a string. 
+    df['NWS'] = df['NWS'].astype(float)
+
     for model in df.columns:
         plt.style.use('seaborn-darkgrid')
         my_dpi = 96
@@ -569,6 +591,7 @@ def plot(df, city_code, df_historical_city, long_name):
 
         # multiple line plot
         column_num = 0
+
         for column in df.columns:
             plt.plot(df.index, df[column], marker='', color=line_color[column], linestyle = line_style[column], linewidth=1, alpha=0.7)
 
