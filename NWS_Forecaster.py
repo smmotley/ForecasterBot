@@ -5,6 +5,7 @@ Data Extraction and Plotting for various Weather APIs
 """
 from noaa_sdk import noaa
 import requests
+import pathlib
 import pandas as pd
 from datetime import datetime
 from datetime import timedelta
@@ -26,6 +27,7 @@ import sqlite3
 from pathlib import Path
 import mailer
 from PIL import Image
+from anticaptchaofficial.recaptchav2proxyless import *
 
 plt.interactive(False)
 KEYS = pd.read_csv(os.path.join(Path(__file__).parents[2], 'userkeys.config'))
@@ -82,6 +84,7 @@ def main():
         df_historical_city = df_historical.loc[df_historical['station'] == location]
 
         # Must return a dataframe since we're manipulating df_final in this def
+        #if location != "KLAS":
         df_maxt = plot(df_final, location, df_historical_city,
                        long_name = locations['city_code'][location]['longname'])
         sql_inject(df_maxt, location, actuals=False)
@@ -91,14 +94,15 @@ def main():
 
     # Go to WxBell and get latest image from 00Z model
     wx_bell_img = wxBell()
-
+    wfolder_path = pathlib.Path('G:/','Energy Marketing','Weather','Programs','Lake_Spaulding')
     run_mailer = mailer.send_mail(
         alerts,
         os.path.join(os.path.dirname(__file__), 'All_Cities.png'),
         os.path.join(os.path.dirname(__file__), "Precip_Image", wx_bell_img),
         os.path.join("G:\Energy Marketing\Weather", historical_date.strftime('%Y%m%d')+'_SWE.jpg'),
         os.path.join(os.path.dirname(__file__), "..", "SnowLevel_Bot", "Images", "qpf_graph.png"),
-        os.path.join("U:\Documents\Programming\PycharmProjects\Prod\Reservior_Snowpack_Chart\Images", 'MFP_Combined_Storage.png'))
+        os.path.join("U:\Documents\Programming\PycharmProjects\Prod\Reservior_Snowpack_Chart\Images", 'MFP_Combined_Storage.png'),
+        os.path.join(wfolder_path, 'LSP_Graphs.png'))
     # df_final.to_csv(os.path.join(os.path.dirname(os.path.abspath(__file__)),'output.csv'), index=True,
 
 def historical(cities,date):
@@ -138,7 +142,7 @@ def sql_inject(df, location, actuals):
                  'highest_gust_direction', 'highest_gust_speed',
                  'highest_wind_direction', 'highest_wind_speed',
                  'resultant_wind_direction', 'resultant_wind_speed',
-                 'valid', 'average_sky_cover'],
+                 'valid', 'average_sky_cover', 'precip_jan1_depart'],
                 inplace=True, axis=1)
         c.execute("SELECT date_created FROM actuals WHERE date_created = ? AND city_code = ?",
                   (df.index[0].strftime('%Y-%m-%d %H:%M:%S'), location,))
@@ -304,8 +308,8 @@ def daily(n, latlng):
         #       will contain info for the correct timezone (prove it by uncommenting the print statement below).
         # print(df_wu.index[0].day)
 
-    except KeyError:
-        print("!!!!FATAL ERROR!!!! NWS Data Unavailable: " + res_nws['detail'])
+    except:
+        print("!!!!FATAL ERROR!!!! NWS Data Unavailable: ")
         df_nws = pd.DataFrame(columns=["endTime", "startTime", "high_nws", "low_nws"])
 
         # IF you get an exception, at this point the df_aw index will not be set. So set index as date.
@@ -446,6 +450,11 @@ def wxBell():
     # For GIF
     get_GIF = False
 
+    # To obtain this, go to https://www.weatherbell.com/login-captcha and search for "sitekey"
+    # On their site it's specifically <div class="g-recaptcha" data-sitekey="6LcBa8EZAAAAAICUmvcgJjc0U5KLCPBQN6kNmQ9W">
+    wx_bell_captcha_site_key = "6LcBa8EZAAAAAICUmvcgJjc0U5KLCPBQN6kNmQ9W"
+    anti_captcha_key = os.environ['ANTI_CAPTCHA_KEY']
+
     file_date = datetime.now().strftime("%Y%m%d") + "00"
     file_date_06Z = datetime.now().strftime("%Y%m%d") + "06"
     pattern = "%Y%m%d%H"
@@ -472,6 +481,18 @@ def wxBell():
         "type": "model"
     }
 
+    g_response = ""
+    try:
+        solver = recaptchaV2Proxyless()
+        solver.set_verbose(1)
+        solver.set_key(anti_captcha_key)
+        solver.set_website_url("https://www.weatherbell.com/login-captcha")
+        solver.set_website_key(wx_bell_captcha_site_key)
+
+        g_response = solver.solve_and_return_solution()
+    except:
+        print("COULD NOT SOLVE CAPTCHA")
+
     req_url = 'https://maps.api.weatherbell.com/image/'  # Base API directory for images.
     req_url_gif = 'https://maps.api.weatherbell.com/gif/'   # Base API directory for gif.
     # old_file_name = 'KBLU_' + file_date + '_eps_precip_360.png'
@@ -479,12 +500,14 @@ def wxBell():
     user, pw = KEYS.iloc[3]['short_name'], KEYS.iloc[3]['key']
     payload = {'username': user,
                'password': pw,
-               'do_login': 'Login'
+               'do_login': 'Login',
+               'recaptchaResponse': g_response
                }
+
 
     curDir = os.path.dirname(os.path.abspath(__file__))  # Where to put the file
     with requests.Session() as s:
-        s.post('https://www.weatherbell.com/login', data=payload)  # Send post request to login and generate a session.
+        s.post('https://www.weatherbell.com/login-captcha', data=payload)  # Send post request to login and generate a session.
         meteogram_id = json.loads(s.post(req_url, json=meteogram_payload).text)  # Get the unique ID for the meteogram
         nam_ref_id = json.loads(s.post(req_url, json=nam_nest_payload).text)  # Get the unique ID for the nam nest
 
@@ -572,14 +595,14 @@ def plot(df, city_code, df_historical_city, long_name):
     # df is a COPY of the df. Any changes we do in here MUST be returned to __main__ if we want to use it again.
     df['PCWA'].fillna(df[['EURO_EPS', 'EURO_EPS', 'EURO_EPS', 'GFS_bc', 'GFS']].mean(axis=1), inplace=True)
 
-    # for some reason, the NWS data was being stored as a string. 
+    # for some reason, the NWS data was being stored as a string.
     df['NWS'] = df['NWS'].astype(float)
 
     for model in df.columns:
         plt.style.use('seaborn-darkgrid')
         my_dpi = 96
         plt.figure(figsize=(640 / my_dpi, 225 / my_dpi), dpi=my_dpi)
-        ax = plt.gca()  # Get Current Axis
+        ax = plt.gca()  # Get Current Axis.is
         COL = MplColorHelper('jet', df_historical_city["high_normal"] - 15, df_historical_city["high_normal"] + 15)
 
         xfmt = mdates.DateFormatter('%a\n%#m/%#d')
