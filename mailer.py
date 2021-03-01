@@ -28,7 +28,7 @@ def send_mail(alerts, file_attachment1, file_attachment2, file_attachment3, file
                                   "dreintjes@pcwa.net",
                                   "bbarker@pcwa.net",
                                   "afecko@pcwa.net"], # replace with your email for testing
-                      #recipients=["smotley@pcwa.net"], # replace with your email for testing
+                      # recipients=["smotley@pcwa.net"], # replace with your email for testing
                       body="Max Temps and Precip Forecast for Sacramento are attached.")
         msg.html = alerts
 

@@ -27,6 +27,7 @@ import sqlite3
 from pathlib import Path
 import mailer
 from PIL import Image
+import platform
 from anticaptchaofficial.recaptchav2proxyless import *
 
 plt.interactive(False)
@@ -94,15 +95,31 @@ def main():
 
     # Go to WxBell and get latest image from 00Z model
     wx_bell_img = wxBell()
-    wfolder_path = pathlib.Path('G:/','Energy Marketing','Weather','Programs','Lake_Spaulding')
+
+    img_dir = os.path.join(os.path.sep, 'home','smotley','images','weather_email')
+
+    # On the Linux, save all the files to the img directory.
+    this_dir = img_dir
+    snowlevel_bot_dir = img_dir
+    res_snopack_chart_dir = img_dir
+    swe_dir = this_dir
+
+    # On windows, save to the correct folders
+    if platform.system() == 'Windows':
+        img_dir = pathlib.Path('G:/','Energy Marketing','Weather','Programs','Lake_Spaulding')
+        this_dir = os.path.dirname(__file__)
+        snowlevel_bot_dir = os.path.join(os.path.dirname(__file__), "..", "SnowLevel_Bot", "Images")
+        res_snopack_chart_dir = "U:\Documents\Programming\PycharmProjects\Prod\Reservior_Snowpack_Chart\Images"
+        swe_dir = "G:\Energy Marketing\Weather"
+
     run_mailer = mailer.send_mail(
         alerts,
-        os.path.join(os.path.dirname(__file__), 'All_Cities.png'),
-        os.path.join(os.path.dirname(__file__), "Precip_Image", wx_bell_img),
-        os.path.join("G:\Energy Marketing\Weather", historical_date.strftime('%Y%m%d')+'_SWE.jpg'),
-        os.path.join(os.path.dirname(__file__), "..", "SnowLevel_Bot", "Images", "qpf_graph.png"),
-        os.path.join("U:\Documents\Programming\PycharmProjects\Prod\Reservior_Snowpack_Chart\Images", 'MFP_Combined_Storage.png'),
-        os.path.join(wfolder_path, 'LSP_Graphs.png'))
+        os.path.join(this_dir, 'All_Cities.png'),
+        os.path.join(this_dir, "Precip_Image", wx_bell_img),
+        os.path.join(swe_dir, historical_date.strftime('%Y%m%d')+'_SWE.jpg'),
+        os.path.join(snowlevel_bot_dir, "qpf_graph.png"),
+        os.path.join(res_snopack_chart_dir, 'MFP_Combined_Storage.png'),
+        os.path.join(img_dir, 'LSP_Graphs.png'))
     # df_final.to_csv(os.path.join(os.path.dirname(os.path.abspath(__file__)),'output.csv'), index=True,
 
 def historical(cities,date):
@@ -385,18 +402,19 @@ def stormVista(cities):
         fileName = today.strftime("%Y%m%d") + "_" + modelCycle + "_" + model + ".csv"
 
         curDir = os.path.dirname(os.path.abspath(__file__))
+        archive_dir = os.path.join(curDir, "Archive")
         # Download file if it hasn't been downloaded yet.
-        if not os.path.isfile(os.path.join(curDir,fileName)):
+        if not os.path.isfile(os.path.join(archive_dir,fileName)):
             try:
                 df_min_max = pd.read_csv(base_url + sv_min_max, header=[0, 1])
                 time.sleep(5)  # Wait 5 seconds before continuing (per stormvista api requirement)
-                df_min_max.to_csv(os.path.join(curDir,fileName), index=False)
+                df_min_max.to_csv(os.path.join(archive_dir,fileName), index=False)
             except:
                 return pd.DataFrame(data=pd.date_range(start=today,
                                              end=(datetime.utcnow() + timedelta(days=15)).strftime("%Y%m%d"),
                                                        freq='D'), columns=['date'])
         else:
-            df_min_max = pd.read_csv(os.path.join(curDir, fileName), header=[0, 1])
+            df_min_max = pd.read_csv(os.path.join(archive_dir, fileName), header=[0, 1])
 
         # Because the header info is in the top two rows, pandas treats each column name as a tuple. Flatten the
         # tuple and put a "/" between each string (column 1 = tuple ("A","B") => "A/B"
@@ -507,6 +525,11 @@ def wxBell():
 
     curDir = os.path.dirname(os.path.abspath(__file__))  # Where to put the file
     with requests.Session() as s:
+        img_dir = os.path.join(os.path.sep, 'home', 'smotley', 'images', 'weather_email')
+        if platform.system() == 'Windows':
+            # If we're on windows, just save it to the current folder.
+            img_dir = os.path.dirname(os.path.realpath(__file__))
+
         s.post('https://www.weatherbell.com/login-captcha', data=payload)  # Send post request to login and generate a session.
         meteogram_id = json.loads(s.post(req_url, json=meteogram_payload).text)  # Get the unique ID for the meteogram
         nam_ref_id = json.loads(s.post(req_url, json=nam_nest_payload).text)  # Get the unique ID for the nam nest
@@ -519,7 +542,7 @@ def wxBell():
             image = s.get('https://images.weatherbell.net/meteogram/ecmwf-ensemble/KBLU/indiv_qpf/' + url_tag)
             #image = s.get(old_image_url)
             if image.status_code == 200:
-                with open(os.path.join(curDir, "Precip_Image", file_date + '.png'), "wb") as f:
+                with open(os.path.join(img_dir, "Precip_Image", file_date + '.png'), "wb") as f:
                     f.write(image.content)
                     print("WxBell Image " + file_date + ".png Created")
             else:
@@ -653,11 +676,15 @@ def plot(df, city_code, df_historical_city, long_name):
 
         # Change xlim
         # plt.xlim(0, 12)
+        img_dir = os.path.join(os.path.sep, 'home', 'smotley', 'images', 'weather_email')
+        if platform.system() == 'Windows':
+            # If we're on windows, just save it to the current folder.
+            img_dir = os.path.dirname(os.path.realpath(__file__))
 
         # And add a special annotation for the group we are interested in
         # plt.text(100.2, df.KSAC_max_gfs.tail(1), 'Mr Orange', horizontalalignment='left', size='small', color='orange')
         if model == 'PCWA':
-            plt.savefig(city_code + '_' + model +'.png')
+            plt.savefig(os.path.join(img_dir,city_code + '_' + model +'.png'))
             #plt.show()
         plt.clf()
         plt.close()
@@ -666,7 +693,11 @@ def plot(df, city_code, df_historical_city, long_name):
 
 
 def create_merged_png():
-    images = [Image.open(x) for x in ['KSAC_PCWA.png', 'KBUR_PCWA.png',
+    img_dir = os.path.join(os.path.sep, 'home', 'smotley', 'images', 'weather_email')
+    if platform.system() == 'Windows':
+        # If we're on windows, just save it to the current folder.
+        img_dir = os.path.dirname(os.path.realpath(__file__))
+    images = [Image.open(os.path.join(img_dir, x)) for x in ['KSAC_PCWA.png', 'KBUR_PCWA.png',
                                       'KPDX_PCWA.png', 'KLAS_PCWA.png',
                                       'KSEA_PCWA.png', 'KPHX_PCWA.png']]
     widths, heights = zip(*(i.size for i in images))
@@ -686,7 +717,7 @@ def create_merged_png():
             y_offset += im.size[1]
 
 
-    new_im.save('All_Cities.png')
+    new_im.save(os.path.join(img_dir,'All_Cities.png'))
     return
 
 
