@@ -33,6 +33,8 @@ from anticaptchaofficial.recaptchav2proxyless import *
 plt.interactive(False)
 KEYS = pd.read_csv(os.path.join(Path(__file__).parents[2], 'userkeys.config'))
 n = noaa.NOAA()
+pd.plotting.register_matplotlib_converters()
+
 class MplColorHelper:
 
     def __init__(self, cmap_name, start_val, stop_val):
@@ -102,7 +104,7 @@ def main():
     this_dir = img_dir
     snowlevel_bot_dir = img_dir
     res_snopack_chart_dir = img_dir
-    swe_dir = this_dir
+    swe_dir = os.path.join(this_dir, 'SWE_images')
 
     # On windows, save to the correct folders
     if platform.system() == 'Windows':
@@ -151,16 +153,13 @@ def sql_inject(df, location, actuals):
     df['forecast_day'] = (df['date_valid'] - df['date_created'])/np.timedelta64(1, 'D')
     if actuals:
         # Remove new parameters in the actuals file that are not in our database
-        df.drop(['high_time',
-                 'low_time',
-                 'precip_normal',
-                 'precip_record_years',
-                 'snow_record_years', 'average_wind_speed',
-                 'highest_gust_direction', 'highest_gust_speed',
-                 'highest_wind_direction', 'highest_wind_speed',
-                 'resultant_wind_direction', 'resultant_wind_speed',
-                 'valid', 'average_sky_cover', 'precip_jan1_depart'],
-                inplace=True, axis=1)
+        df = df[['high','high_depart','high_normal','high_record','high_record_years','link','low','low_depart',
+                 'low_normal','low_record','low_record_years','name','precip','precip_dec1','precip_dec1_normal',
+                 'precip_jan1','precip_jan1_normal','precip_jul1','precip_jun1','precip_jun1_normal','precip_month',
+                 'precip_month_normal','precip_record','snow','snow_dec1','snow_dec1_normal','snow_jul1',
+                 'snow_jul1_depart','snow_jul1_normal','snow_jun1','snow_month','snow_month_normal',
+                 'snow_record','state','station','wfo','city_code','date_created','date_valid','forecast_day']]
+        #df = df[['high','high_depart','high_normal','high_record']]
         c.execute("SELECT date_created FROM actuals WHERE date_created = ? AND city_code = ?",
                   (df.index[0].strftime('%Y-%m-%d %H:%M:%S'), location,))
         data = c.fetchall()
@@ -347,16 +346,18 @@ def nwsAlerts(warning_types):
             # ID is in the form of "https://api.weather.gov/alerts/NWS-IDP-PROD-3627045-3151056" So we split it twice
             # The first split gives the ID # and another # (e.g. 3627045-3151056) so we split by the '-' and take the
             # first number, which I think is the actual ID of the warning.
-            thisID = alert["id"].split("NWS-IDP-PROD-")[1].split('-')[0]
+            thisID = alert["properties"]["id"]
             if thisID not in id_list:
                 id_list.append(thisID)
                 counter = counter + 1
                 msg = msg + f"""\
                    <strong><br> <span style="color:red;">Alert # {str(counter)} </span><br> {alert["properties"]["headline"]} 
                    </strong> <br> <b>Summary:</b> <br> {alert["properties"]["description"]} <br> """
+
     except:
         counter = "ERROR. NWS ALERT SERVICE UNAVILABLE."
 
+    msg = msg.replace("*","<br>")   # Insert a new line when there is an "*"
     htmlMsg = f"""\
     <html>
       <head></head>
@@ -374,7 +375,7 @@ def nwsAlerts(warning_types):
 
 def stormVista(cities):
 
-    base_url = "https://www.stormvistawxmodels.com/"
+    base_url = "https://api.stormvistawxmodels.com/"
     clientKey =  KEYS.iloc[0]['key']
     models = ["gfs", "ecmwf", "gfs-ens-bc", "ecmwf-eps"]
     # hours = np.arange(0,360,6)
@@ -397,8 +398,8 @@ def stormVista(cities):
         #sv_min_max = "client-files/" + clientKey + "/model-data/" + model + "/" + today.strftime("%Y%m%d") + "/" + modelCycle + "/city-extraction/corrected-max-min_northamerica.csv"
 
         #RAW
-        sv_min_max = "client-files/" + clientKey + "/model-data/" + model + "/" + today.strftime(
-            "%Y%m%d") + "/" + modelCycle + "/city-extraction/max-min_northamerica.csv"
+        sv_min_max = "v1/model-data/" + model + "/" + today.strftime(
+            "%Y%m%d") + "/" + modelCycle + "/city-extraction/max-min_northamerica.csv?apikey=" + clientKey
         fileName = today.strftime("%Y%m%d") + "_" + modelCycle + "_" + model + ".csv"
 
         curDir = os.path.dirname(os.path.abspath(__file__))
@@ -654,7 +655,7 @@ def plot(df, city_code, df_historical_city, long_name):
         plt.legend(loc='upper center', ncol=6, prop={'size': 6})
 
         plt.plot(df.index, df[model], markerfacecolor = 'black', color=line_color[model], linestyle = line_style[model], linewidth=4, alpha=0.7, zorder=2)
-        plt.scatter(df.index, df[model], color=COL.get_rgb(df[model]), edgecolors='black', zorder=3)
+        plt.scatter(df[model].dropna().index, df[model].dropna(), color=COL.get_rgb(df[model].dropna()), edgecolors='black', zorder=3)
         x_min, x_max, y_min, y_max = plt.axis()
         plt.axis((x_min,x_max, int(math.floor(y_min / 5.0)) * 5, int(math.floor((y_max + 10) / 10.0)) * 10))
         plt.xticks(df.index, rotation=0, fontsize=8)
