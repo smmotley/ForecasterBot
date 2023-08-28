@@ -4,7 +4,6 @@ import os
 from pathlib import Path
 
 app = Flask(__name__)
-
 mail_settings = {
     "MAIL_SERVER": 'smtp.gmail.com',
     "MAIL_PORT": 465,
@@ -13,7 +12,6 @@ mail_settings = {
     "MAIL_USERNAME": os.environ['GMAIL_USER'],
     "MAIL_PASSWORD": os.environ['GMAIL_PASSWORD']
 }
-
 app.config.update(mail_settings)
 mail = Mail(app)
 
@@ -22,13 +20,18 @@ def send_mail(alerts, file_attachment1, file_attachment2, file_attachment3, file
     with app.app_context():
         msg = Message(subject="Forecast and Current Snowpack",
                       sender=app.config.get("MAIL_USERNAME"),
-                      recipients=["smotley@pcwa.net",
-                                  "rcline@pcwa.net",
-                                  "kswanberg@pcwa.net",
-                                  "dreintjes@pcwa.net",
-                                  "bbarker@pcwa.net",
-                                  "afecko@pcwa.net"], # replace with your email for testing
-                      # recipients=["smotley@pcwa.net"], # replace with your email for testing
+                      reply_to="smotley@pcwa.net",
+                      bcc=["kswanberg@pcwa.net",
+                            "bbarker@pcwa.net",
+                           "afecko@pcwa.net",
+                           "dreintjes@pcwa.net",
+                           # "bransom@pcwa.net",
+                           # "asullivan@pcwa.net",
+                           # "kdushane@pcwa.net",
+                           # "pcannarozzi@pcwa.net",
+                           # "jbergman@pcwa.net"
+                           ], # replace with your email for testing
+                      recipients=["smotley@pcwa.net"], # replace with your email for testing
                       body="Max Temps and Precip Forecast for Sacramento are attached.")
         msg.html = alerts
 

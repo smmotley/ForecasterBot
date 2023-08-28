@@ -85,9 +85,9 @@ class NOAA(UTIL):
     DEFAULT_END_POINT_WU = 'api.wunderground.com'
     DEFAULT_END_POINT_IA = 'mesonet.agron.iastate.edu'
     DEFAULT_USER_AGENT = 'Test (your@email.com)'
-    DEFAULT_USER_KEY = ''
-    AW_CLIENT_ID = ''
-    AW_SECRET_KEY = ''
+    DEFAULT_USER_KEY = '71a80ad0edde3930'
+    AW_CLIENT_ID = '7rgURhbmqoVufvcdis15i'
+    AW_SECRET_KEY = 'Vjdm5b3R5In9voHqXrQqlmZp9dcFBo2Q9w1UvCGq'
 
     def __init__(self, user_agent=None, accept=None, show_uri=False):
         """Constructor.

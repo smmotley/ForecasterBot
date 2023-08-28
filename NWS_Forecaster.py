@@ -12,7 +12,7 @@ from datetime import timedelta
 from dateutil import parser
 import pytz
 import json
-from pandas.io.json import json_normalize
+from pandas import json_normalize
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
@@ -26,6 +26,7 @@ import os
 import sqlite3
 from pathlib import Path
 import mailer
+import nws_openai
 from PIL import Image
 import platform
 from anticaptchaofficial.recaptchav2proxyless import *
@@ -118,8 +119,8 @@ def main():
         alerts,
         os.path.join(this_dir, 'All_Cities.png'),
         os.path.join(this_dir, "Precip_Image", wx_bell_img),
-        os.path.join(swe_dir, historical_date.strftime('%Y%m%d')+'_SWE.jpg'),
         os.path.join(snowlevel_bot_dir, "qpf_graph.png"),
+        os.path.join(swe_dir, historical_date.strftime('%Y%m%d')+'_SWE.jpg'),
         os.path.join(res_snopack_chart_dir, 'MFP_Combined_Storage.png'),
         os.path.join(img_dir, 'LSP_Graphs.png'))
     # df_final.to_csv(os.path.join(os.path.dirname(os.path.abspath(__file__)),'output.csv'), index=True,
@@ -337,6 +338,7 @@ def nwsAlerts(warning_types):
     # Link to CA zone map: https://www.weather.gov/media/pimar/PubZone/ca_n_zone.pdf
     counter = 0
     msg = ""
+    chatGPT_fcst = ""
     id_list = []
     try:
         alerts = n.alerts(active="1", zone="CAZ067,CAZ017,CAZ069")
@@ -357,6 +359,25 @@ def nwsAlerts(warning_types):
     except:
         counter = "ERROR. NWS ALERT SERVICE UNAVILABLE."
 
+    try:
+        chatGPT_fcst = nws_openai.get_afd()
+        chatGPT_msg = f"""
+            <p>
+                <h3 style="margin-bottom: 0;">
+                    <span style="color:#00872b;">Automated AI Generated Fcst<sup>*</sup>:</span>
+                </h3>
+                <h4 style="margin-top: 0; margin-bottom: 0;">
+                    <span style="color:#00872b;"><sup>*</sup>AI Input:</span> NWS models in Sac & Sierra:
+                </h4>
+                <h4 style="margin-top: 0; margin-bottom: 0;">
+                    <span style="color:#00872b;"><sup>*</sup>AI Output:</span> Summary with personality:
+                </h4>
+               {chatGPT_fcst}
+               <br>  
+            </p>"""
+    except:
+        chatGPT_msg = "ERROR. AI FORECAST UNAVILABLE."
+
     msg = msg.replace("*","<br>")   # Insert a new line when there is an "*"
     htmlMsg = f"""\
     <html>
@@ -366,9 +387,11 @@ def nwsAlerts(warning_types):
            {msg}
            <br>
         </p>
+        {chatGPT_msg}
       </body>
     </html>
     """
+    htmlMsg = htmlMsg
 
     return htmlMsg
 
@@ -623,7 +646,7 @@ def plot(df, city_code, df_historical_city, long_name):
     df['NWS'] = df['NWS'].astype(float)
 
     for model in df.columns:
-        plt.style.use('seaborn-darkgrid')
+        plt.style.use('seaborn-v0_8-darkgrid')
         my_dpi = 96
         plt.figure(figsize=(640 / my_dpi, 225 / my_dpi), dpi=my_dpi)
         ax = plt.gca()  # Get Current Axis.is
@@ -652,7 +675,7 @@ def plot(df, city_code, df_historical_city, long_name):
 
         # Now re do the interesting curve, but biger with distinct color
 
-        plt.legend(loc='upper center', ncol=6, prop={'size': 6})
+        plt.legend(loc='upper center', ncol=6, fontsize=6)
 
         plt.plot(df.index, df[model], markerfacecolor = 'black', color=line_color[model], linestyle = line_style[model], linewidth=4, alpha=0.7, zorder=2)
         plt.scatter(df[model].dropna().index, df[model].dropna(), color=COL.get_rgb(df[model].dropna()), edgecolors='black', zorder=3)
